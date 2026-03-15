@@ -1,53 +1,42 @@
+import yfinance as yf
+import pandas_ta as ta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import yfinance as yf
-import pandas as pd
-import pandas_ta as ta
-import uvicorn
 import os
+import time
 
 app = FastAPI()
-
-# CORS allow karna zaroori hai taaki mobile app connect ho sake
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
 def home():
-    return {"status": "AI Trading Backend is Running"}
+    return {"status": "AI Trading Backend Live"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
     try:
-        # Indian stocks ke liye .NS automatic add karna
         s = symbol.upper()
-        if not s.endswith(".NS"):
-            ticker_sym = f"{s}.NS"
-        else:
-            ticker_sym = s
-
-        df = yf.download(ticker_sym, period="60d", interval="1d", progress=False)
+        ticker_sym = f"{s}.NS" if not s.endswith(".NS") else s
         
-        if df.empty:
-            return {"symbol": symbol, "error": "No data found", "score": 0}
+        # Safe way to fetch data to avoid Rate Limit
+        ticker_obj = yf.Ticker(ticker_sym)
+        df = ticker_obj.history(period="1mo", interval="1d", timeout=10)
 
-        # Technical Indicators calculation
+        if df.empty or len(df) < 10:
+            return {"symbol": symbol, "error": "No Data/Rate Limited", "score": 0}
+
+        # Indicators
         df['RSI'] = ta.rsi(df['Close'], length=14)
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         
         current_price = round(float(df['Close'].iloc[-1]), 2)
-        rsi_val = float(df['RSI'].iloc[-1])
+        rsi_val = float(df['RSI'].iloc[-1]) if not df['RSI'].isnull().all() else 50
         ema_val = float(df['EMA_20'].iloc[-1])
         
-        # Simple AI Scoring Logic
         score = 0
-        if rsi_val < 40: score += 4  # Oversold (Buying zone)
-        if rsi_val > 70: score -= 2  # Overbought
-        if current_price > ema_val: score += 4 # Bullish trend
+        if rsi_val < 40: score += 4
+        if rsi_val > 70: score -= 2
+        if current_price > ema_val: score += 4
         
         signal = "NEUTRAL"
         if score >= 7: signal = "STRONG BUY"
@@ -62,9 +51,9 @@ def scan_stock(symbol: str):
             "score": max(0, score)
         }
     except Exception as e:
-        return {"error": str(e), "score": 0}
+        return {"error": "Server Busy, Retry in 1min", "score": 0}
 
 if __name__ == "__main__":
-    # Render automatically port assign karta hai
+    import uvicorn
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
