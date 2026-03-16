@@ -1,58 +1,73 @@
-import yfinance as yf
+import requests
+import pandas as pd
 import pandas_ta as ta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import time
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# AAPKI TWELVE DATA API KEY
+API_KEY = "bac6342d248e44c0849209d9bec85e3e"
+
 @app.get("/")
 def home():
-    return {"status": "Safe Backend Live"}
+    return {"status": "Twelve Data Professional Backend Live"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
     try:
         s = symbol.upper()
-        ticker_sym = f"{s}.NS" if not (s.endswith(".NS") or s.endswith(".BO")) else s
+        # Twelve Data URL - Daily Time Series
+        # India stocks ke liye symbol like 'RELIANCE:NSE' ya 'TCS:NSE'
+        market_symbol = f"{s}:NSE"
+        url = f"https://api.twelvedata.com/time_series?symbol={market_symbol}&interval=1day&outputsize=100&apikey={API_KEY}"
         
-        # Download data with a small delay to avoid blocking
-        df = yf.download(ticker_sym, period="1y", interval="1d", progress=False)
+        response = requests.get(url).json()
 
-        if df.empty or len(df) < 50:
-            return {"symbol": symbol, "error": "Rate Limited or No Data", "score": 0}
+        if "values" not in response:
+            return {"symbol": s, "error": response.get("message", "API Error"), "score": 0}
 
-        # Indicators Calculation
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        df['EMA'] = ta.ema(df['Close'], length=20)
-
-        # GET LATEST VALUES (Safest Method)
-        cp = float(df['Close'].values[-1])
+        # Data Formatting
+        df = pd.DataFrame(response["values"])
+        df["close"] = df["close"].astype(float)
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
         
-        # RSI Check
-        rsi_val = df['RSI'].values[-1]
-        rsi = float(rsi_val) if rsi_val is not None else 50
-        
-        # EMA Check
-        ema_val = df['EMA'].values[-1]
-        ema = float(ema_series.values[-1]) if ema_val is not None else cp
+        # Reverse because Twelve Data gives newest first
+        df = df.iloc[::-1].reset_index(drop=True)
 
+        # 🛠️ INDICATORS LOGIC
+        # 1. RSI
+        df['RSI'] = ta.rsi(df['close'], length=14)
+        # 2. EMA 20
+        df['EMA20'] = ta.ema(df['close'], length=20)
+        # 3. MACD
+        macd = ta.macd(df['close'])
+
+        # Latest Values
+        cp = float(df['close'].iloc[-1])
+        rsi = float(df['RSI'].iloc[-1]) if not df['RSI'].empty else 50
+        ema20 = float(df['EMA20'].iloc[-1]) if not df['EMA20'].empty else cp
+        
+        # Scoring Logic
         score = 0
-        if rsi < 40: score += 5
-        if cp > ema: score += 5
+        if rsi < 40: score += 3 # Oversold
+        if cp > ema20: score += 4 # Uptrend
+        if not macd.empty and macd.iloc[-1, 0] > macd.iloc[-1, 2]: score += 3 # Bullish Crossover
 
         return {
-            "symbol": ticker_sym,
+            "symbol": s,
             "current_price": round(cp, 2),
             "rsi": round(rsi, 2),
             "score": score,
-            "signal": "BUY" if score >= 5 else "WAIT"
+            "signal": "STRONG BUY" if score >= 8 else "BUY" if score >= 6 else "WAIT"
         }
     except Exception as e:
-        return {"error": "Server Busy, Try Again", "details": str(e), "score": 0}
+        return {"error": str(e), "score": 0}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
