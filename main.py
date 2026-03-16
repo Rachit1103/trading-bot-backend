@@ -9,7 +9,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.get("/")
 def home():
-    return {"status": "Backend Live"}
+    return {"status": "Backend Live - Robust Version"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
@@ -17,40 +17,46 @@ def scan_stock(symbol: str):
         s = symbol.upper()
         ticker_sym = f"{s}.NS" if not (s.endswith(".NS") or s.endswith(".BO")) else s
         
-        # Download 1 year data
+        # 1. Download Data
         df = yf.download(ticker_sym, period="1y", interval="1d", progress=False)
-
-        if df.empty or len(df) < 200:
+        if df.empty or len(df) < 50:
             return {"symbol": symbol, "error": "Insufficient Data", "score": 0}
 
-        # Calculate Indicators using pandas_ta
+        # 2. Indicators Calculation with Safety
         rsi_series = ta.rsi(df['Close'], length=14)
         ema_series = ta.ema(df['Close'], length=20)
-        sma_series = ta.sma(df['Close'], length=200)
         macd_df = ta.macd(df['Close'])
 
-        # GET LATEST VALUES (Using .values[-1] to avoid Series error)
-        cp = float(df['Close'].values[-1])
-        rsi = float(rsi_series.values[-1])
-        ema20 = float(ema_series.values[-1])
-        sma200 = float(sma_series.values[-1])
-        macd_val = float(macd_df.iloc[-1, 0])
-        signal_val = float(macd_df.iloc[-1, 2])
+        # 3. Safe Extraction Function
+        def get_val(series):
+            if series is not None and not series.empty:
+                return float(series.iloc[-1])
+            return None
 
-        # Simple Scoring
+        cp = float(df['Close'].iloc[-1])
+        rsi = get_val(rsi_series)
+        ema20 = get_val(ema_series)
+        
+        # MACD validation
+        macd_val = None
+        signal_val = None
+        if macd_df is not None and not macd_df.empty:
+            macd_val = float(macd_df.iloc[-1, 0])
+            signal_val = float(macd_df.iloc[-1, 2])
+
+        # 4. Scoring with "None" checks
         score = 0
-        if rsi < 40: score += 2
-        if cp > ema20: score += 2
-        if cp > sma200: score += 2
-        if macd_val > signal_val: score += 2
-        if rsi > 60: score -= 1
+        if rsi and rsi < 40: score += 2
+        if ema20 and cp > ema20: score += 2
+        if macd_val and signal_val and macd_val > signal_val: score += 2
+        if rsi and rsi > 65: score -= 1
 
         final_score = max(0, min(10, score))
 
         return {
             "symbol": ticker_sym,
             "current_price": round(cp, 2),
-            "rsi": round(rsi, 2),
+            "rsi": round(rsi, 2) if rsi else 0,
             "score": int(final_score),
             "signal": "BUY" if final_score >= 6 else "WAIT"
         }
