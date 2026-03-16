@@ -8,66 +8,66 @@ import os
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# AAPKI TWELVE DATA API KEY
-API_KEY = "bac6342d248e44c0849209d9bec85e3e"
+# 🔑 AAPKI RAPIDAPI KEY
+RAPID_API_KEY = "3ff3987b04mshdac7fc8bb92c27cp12f7f6jsn11dd6c9ed92e"
 
 @app.get("/")
 def home():
-    return {"status": "Twelve Data Professional Backend Live"}
+    return {"status": "RapidAPI Pro Backend Live"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
     try:
         s = symbol.upper()
-        # Twelve Data URL - Daily Time Series
-        # India stocks ke liye symbol like 'RELIANCE:NSE' ya 'TCS:NSE'
-        market_symbol = f"{s}:NSE"
-        url = f"https://api.twelvedata.com/time_series?symbol={market_symbol}&interval=1day&outputsize=100&apikey={API_KEY}"
+        ticker = f"{s}.NS"
         
-        response = requests.get(url).json()
-
-        if "values" not in response:
-            return {"symbol": s, "error": response.get("message", "API Error"), "score": 0}
-
-        # Data Formatting
-        df = pd.DataFrame(response["values"])
-        df["close"] = df["close"].astype(float)
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
+        # Sahi Endpoint for yahoo-finance15
+        url = "https://yahoo-finance15.p.rapidapi.com/api/yahoo/hi/history"
+        querystring = {"symbol": ticker, "interval": "1d", "diffandsplits": "false"}
         
-        # Reverse because Twelve Data gives newest first
-        df = df.iloc[::-1].reset_index(drop=True)
+        headers = {
+            "X-RapidAPI-Key": RAPID_API_KEY,
+            "X-RapidAPI-Host": "yahoo-finance15.p.rapidapi.com"
+        }
 
-        # 🛠️ INDICATORS LOGIC
-        # 1. RSI
-        df['RSI'] = ta.rsi(df['close'], length=14)
-        # 2. EMA 20
-        df['EMA20'] = ta.ema(df['close'], length=20)
-        # 3. MACD
-        macd = ta.macd(df['close'])
+        response = requests.get(url, headers=headers, params=querystring).json()
+        
+        # Items extract karein
+        items = response.get('items', {})
+        if not items:
+            return {"symbol": s, "error": "No Data Found", "score": 0}
 
-        # Latest Values
-        cp = float(df['close'].iloc[-1])
+        # Convert dictionary to DataFrame for calculation
+        data_list = []
+        for date, val in items.items():
+            data_list.append({"Date": date, "Close": float(val['close'])})
+        
+        df = pd.DataFrame(data_list)
+        df = df.sort_values('Date') 
+
+        # Indicators Calculation
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        df['EMA20'] = ta.ema(df['Close'], length=20)
+
+        cp = float(df['Close'].iloc[-1])
         rsi = float(df['RSI'].iloc[-1]) if not df['RSI'].empty else 50
         ema20 = float(df['EMA20'].iloc[-1]) if not df['EMA20'].empty else cp
-        
-        # Scoring Logic
+
+        # AI Scoring Logic
         score = 0
-        if rsi < 40: score += 3 # Oversold
-        if cp > ema20: score += 4 # Uptrend
-        if not macd.empty and macd.iloc[-1, 0] > macd.iloc[-1, 2]: score += 3 # Bullish Crossover
+        if rsi < 45: score += 5
+        if cp > ema20: score += 5
 
         return {
-            "symbol": s,
+            "symbol": ticker,
             "current_price": round(cp, 2),
             "rsi": round(rsi, 2),
             "score": score,
-            "signal": "STRONG BUY" if score >= 8 else "BUY" if score >= 6 else "WAIT"
+            "signal": "BUY" if score >= 7 else "WAIT"
         }
     except Exception as e:
-        return {"error": str(e), "score": 0}
+        return {"error": "API Connection Busy", "score": 0}
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
