@@ -9,55 +9,58 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.get("/")
 def home():
-    return {"status": "AI Trader Pro Backend - Fixed Logic Live"}
+    return {"status": "AI Trader Pro Backend Live"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
     try:
         s = symbol.upper()
-        ticker_sym = f"{s}.NS" if not s.endswith(".NS") else s
-        df = yf.download(ticker_sym, period="6mo", interval="1d", progress=False)
+        # Bharat ke stocks ke liye .NS lagana zaroori hai
+        ticker_sym = f"{s}.NS" if not (s.endswith(".NS") or s.endswith(".BO")) else s
+        
+        # 1 saal ka data download karein taaki 200 SMA sahi nikal sake
+        df = yf.download(ticker_sym, period="1y", interval="1d", progress=False)
 
-        if df.empty or len(df) < 50:
-            return {"symbol": symbol, "error": "Insufficient Data", "score": 0}
+        if df.empty or len(df) < 200:
+            return {"symbol": symbol, "error": f"Insufficient Data (Need 200+ days, got {len(df)})", "score": 0}
 
         # Indicators Calculation
         df['RSI'] = ta.rsi(df['Close'], length=14)
         macd = ta.macd(df['Close'])
         df['EMA_20'] = ta.ema(df['Close'], length=20)
         df['SMA_200'] = ta.sma(df['Close'], length=200)
-        adx = ta.adx(df['High'], df['Low'], df['Close'], length=14)
-        df['VOL_MA'] = ta.sma(df['Volume'], length=20)
-
-        # FIX: Extracting single float values correctly
+        
+        # Current Values extract karein
         cp = float(df['Close'].iloc[-1])
         rsi = float(df['RSI'].iloc[-1])
-        # MACD Column names can vary, so we use index
         macd_line = float(macd.iloc[-1, 0]) 
         signal_line = float(macd.iloc[-1, 2])
         ema20 = float(df['EMA_20'].iloc[-1])
         sma200 = float(df['SMA_200'].iloc[-1])
-        adx_val = float(adx.iloc[-1, 0])
         vol_curr = float(df['Volume'].iloc[-1])
-        vol_ma = float(df['VOL_MA'].iloc[-1])
+        vol_ma = float(ta.sma(df['Volume'], length=20).iloc[-1])
 
-        # Scoring Logic
+        # Scoring Logic (Simple 10 point scale)
         score = 0
         if rsi < 40: score += 2
+        if rsi > 60: score -= 1
         if macd_line > signal_line: score += 2
         if cp > ema20: score += 2
         if cp > sma200: score += 2
         if vol_curr > vol_ma: score += 2
 
+        # Final Score adjustment
+        final_score = max(0, min(10, score))
+        
         signal = "WAIT"
-        if score >= 7: signal = "BUY"
-        elif score <= 3: signal = "SELL"
+        if final_score >= 7: signal = "BUY"
+        elif final_score <= 3: signal = "SELL"
 
         return {
             "symbol": ticker_sym,
             "current_price": round(cp, 2),
             "rsi": round(rsi, 2),
-            "score": score,
+            "score": final_score,
             "signal": signal
         }
     except Exception as e:
