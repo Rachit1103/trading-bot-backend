@@ -108,6 +108,14 @@ def scan_single_stock(symbol: str):
 @app.get("/history_names")
 def get_history():
     return {"scanned_stocks": scanned_names_history}
+# --- History Delete karne ka rasta ---
+@app.get("/delete_history")
+def delete_history():
+    global scanned_names_history
+    scanned_names_history = [] # Memory saaf karein
+    if os.path.exists(HISTORY_FILE):
+        os.remove(HISTORY_FILE) # File saaf karein
+    return {"message": "History Cleared Successfully"}
 
 if __name__ == "__main__":
     import uvicorn
