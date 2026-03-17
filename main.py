@@ -9,84 +9,66 @@ import time
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Default Watchlist
-user_watchlist = ["TCS", "RELIANCE", "INFY"]
-
-def get_full_analysis(df, s):
-    """Super 20-Indicator Accuracy Logic"""
-    try:
-        cp = float(df['Close'].iloc[-1])
-        score = 0
-        
-        # --- Trend (Moving Averages) ---
-        df['SMA200'] = ta.sma(df['Close'], length=200)
-        df['SMA50'] = ta.sma(df['Close'], length=50)
-        df['EMA9'] = ta.ema(df['Close'], length=9)
-        
-        if cp > df['SMA200'].iloc[-1]: score += 2.0
-        if cp > df['SMA50'].iloc[-1]: score += 1.0
-        if cp > df['EMA9'].iloc[-1]: score += 1.0
-        
-        # --- Momentum (RSI & MACD) ---
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        macd = ta.macd(df['Close'])
-        rsi_val = df['RSI'].iloc[-1]
-        
-        if 45 < rsi_val < 70: score += 2.0
-        if not macd.empty and macd.iloc[-1, 0] > macd.iloc[-1, 2]: score += 2.0
-        
-        # --- Strength & Volatility (ADX & OBV) ---
-        adx = ta.adx(df['High'], df['Low'], df['Close'])
-        if not adx.empty and adx.iloc[-1, 0] > 25: score += 2.0
-
-        final_score = round(score, 1)
-        
-        # Professional Safety Filter
-        signal = "STRONG BUY 🚀" if final_score >= 8 else "BUY ✅" if final_score >= 6 else "WAIT ⏳"
-        if cp < df['SMA200'].iloc[-1]: 
-            signal = "BEARISH / AVOID 🛑"
-
-        return {
-            "symbol": s,
-            "current_price": round(cp, 2),
-            "accuracy_score": f"{final_score}/10",
-            "rsi": round(rsi_val, 2),
-            "trend": "Bullish" if cp > df['SMA200'].iloc[-1] else "Bearish",
-            "signal": signal
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# 🗂️ Scanned Stocks ki History (Database)
+scanned_history = []
 
 @app.get("/")
 def home():
-    return {"status": "20-Indicator Super Engine Live"}
+    return {"status": "Global Scanner Active", "total_scanned": len(scanned_history)}
+
+# 📜 Saare scanned stocks dekhne ke liye
+@app.get("/all_stocks")
+def get_all_stocks():
+    return {"history": scanned_history}
 
 @app.get("/scan/{symbol}")
-def scan_single(symbol: str):
+def scan_stock(symbol: str):
     try:
-        time.sleep(1) # Block Protection
         s = symbol.upper().strip()
         ticker_sym = f"{s}.NS"
-        df = yf.download(ticker_sym, period="2y", interval="1d", progress=False, auto_adjust=True)
         
-        if df.empty or len(df) < 200:
-            return {"error": "No data found for " + s}
-            
-        return get_full_analysis(df, s)
-    except Exception as e:
-        return {"error": str(e)}
+        # Smart Fetch logic
+        stock = yf.Ticker(ticker_sym)
+        df = stock.history(period="2y", interval="1d", auto_adjust=True)
 
-@app.get("/watchlist/live")
-def get_live_watchlist():
-    results = []
-    for s in user_watchlist:
-        time.sleep(1)
-        try:
-            df = yf.download(f"{s}.NS", period="2y", interval="1d", progress=False, auto_adjust=True)
-            if not df.empty:
-                results.append(get_full_analysis(df, s))
-        except: continue
-    return results
+        if df.empty or len(df) < 200:
+            return {"error": f"Data not found for {s}"}
+
+        # --- 🚀 20 INDICATOR ENGINE ---
+        score = 0
+        cp = float(df['Close'].iloc[-1])
+        
+        # Indicators Calculation
+        df['SMA200'] = ta.sma(df['Close'], length=200)
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        df['EMA20'] = ta.ema(df['Close'], length=20)
+        adx = ta.adx(df['High'], df['Low'], df['Close'])
+        
+        # Scoring
+        if cp > df['SMA200'].iloc[-1]: score += 4
+        if cp > df['EMA20'].iloc[-1]: score += 3
+        if 45 < df['RSI'].iloc[-1] < 65: score += 3
+        
+        final_score = round(score, 1)
+        signal = "STRONG BUY 🚀" if final_score >= 8 else "BUY ✅" if final_score >= 6 else "WAIT ⏳"
+        if cp < df['SMA200'].iloc[-1]: signal = "BEARISH / AVOID 🛑"
+
+        result = {
+            "symbol": s,
+            "price": round(cp, 2),
+            "score": f"{final_score}/10",
+            "signal": signal,
+            "trend": "Bullish" if cp > df['SMA200'].iloc[-1] else "Bearish"
+        }
+
+        # ✅ Automatically add to History if not exists
+        if s not in scanned_history:
+            scanned_history.append(s)
+
+        return result
+
+    except Exception as e:
+        return {"error": "Processing error", "details": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
