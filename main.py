@@ -3,24 +3,14 @@ import pandas_ta as ta
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import requests
+import pandas as pd
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 🛡️ Anti-Block Session Builder
-def get_safe_session():
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Connection': 'keep-alive'
-    })
-    return session
-
 @app.get("/")
 def home():
-    return {"status": "Heavy Engine Live & Protected"}
+    return {"status": "Heavy Engine Live"}
 
 @app.get("/scan/{symbol}")
 def scan_stock(symbol: str):
@@ -28,42 +18,41 @@ def scan_stock(symbol: str):
         s = symbol.upper().strip()
         ticker_sym = f"{s}.NS"
         
-        # Data download using safe session
-        df = yf.download(ticker_sym, period="2y", interval="1d", progress=False, session=get_safe_session())
+        # Simple download without custom sessions to avoid curl_cffi error
+        df = yf.download(ticker_sym, period="2y", interval="1d", progress=False)
 
         if df.empty or len(df) < 200:
-            return {"symbol": s, "error": "Insufficient history or busy server", "score": 0}
+            return {"symbol": s, "error": "Insufficient history or Yahoo busy", "score": 0}
 
-        # Fix column names for multi-index
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+        # Handle potential multi-index
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-        # --- HEAVY ACCURACY LOGIC ---
+        # 📊 HEAVY INDICATORS
         df['SMA200'] = ta.sma(df['Close'], length=200)
         df['EMA20'] = ta.ema(df['Close'], length=20)
         df['RSI'] = ta.rsi(df['Close'], length=14)
-        macd = ta.macd(df['Close'])
 
         cp = float(df['Close'].iloc[-1])
         rsi = float(df['RSI'].iloc[-1])
         sma200 = float(df['SMA200'].iloc[-1])
         ema20 = float(df['EMA20'].iloc[-1])
 
-        # Scoring (Confluence Strategy)
+        # Scoring Logic
         score = 0
-        if cp > sma200: score += 4  # Bullish Trend
-        if cp > ema20: score += 3   # Short term momentum
-        if 40 < rsi < 65: score += 3 # Strength check
+        if cp > sma200: score += 4  # Accuracy: Trend is your friend
+        if cp > ema20: score += 3
+        if 40 < rsi < 65: score += 3
 
         return {
             "symbol": s,
             "current_price": round(cp, 2),
             "score": score,
-            "rsi": round(rsi, 2),
             "trend": "BULLISH" if cp > sma200 else "BEARISH",
-            "signal": "STRONG BUY 🚀" if score >= 8 else "BUY ✅" if score >= 5 else "WAIT ⏳"
+            "signal": "STRONG BUY 🚀" if score >= 8 else "BUY ✅" if score >= 6 else "WAIT ⏳"
         }
     except Exception as e:
-        return {"error": "Server Cool-down", "details": str(e)}
+        return {"error": "Technical Sync Issue", "details": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
